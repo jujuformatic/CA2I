@@ -1,205 +1,149 @@
-#include "libCA2I/comm.h"
-#include "libCA2I/affichage.h"
 #include <pthread.h>
 #include <signal.h>
-#include <sys/select.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "comm_modules/comm_7segments.h"
+#include "comm_modules/comm_matriceLed.h"
+#include "comm_modules/comm_matriceBtn.h"
 
-typedef struct {
-    char playerName[NAME_MAX_LENGTH];
-    socket_t socket;
-} thread_args_t;
+#define NUM_THREAD_MAIN 1
+#define NUM_THREAD_MINUTEUR 2
+#define NUM_THREAD_LED 3
+#define NUM_THREAD_BOUTONS 4
 
-void bye();
-void salon();
-void jeu(socket_t, char *);
-void gestionClient(void *args);
-pthread_t create_thread(pthread_t *thread, void *(*start_routine)(void *), thread_args_t *args);
+pthread_t thread_main;
+pthread_t thread_minuteur;
+pthread_t thread_led;
+pthread_t thread_boutons;
+volatile int stop_minuteur = 0; // Variable pour indiquer si le minuteur doit être arrêté
+int points[8] = {0}; // Exemple de points à afficher
+int buttonPressed = 0; // Variable pour stocker le bouton appuyé
 
-room_t myRoom;
-pthread_mutex_t terminalMutex;
-pthread_t roomThread;
-socket_t servExchangeSocket;
-socket_t roomExchangeSocket;
 
-bool stopSalon = false;
+void gestionnaireSIGUSR1(int signum);
+void *lancerMinuteur(void *arg);
+void *gererPoints(void *args);
+void *gererBoutons(void *args);
 
-int main(int argc, char *argv[])
-{
-    atexit(bye);
+int main() {
+    initPins(); // Initialiser la matrice de boutons
+    // Stocker l'identifiant du thread principal
+    thread_main = pthread_self();
 
-    if (argc < 3)
-    {
-        printf("Arguments : pseudo, salon à rejoindre (=pseudo pour une création)\n");
-        exit(1);
-    }
-    printf("Lancement du programme\n");
-    printf("Nom du joueur : %s\n", argv[1]);
-    printf("Nom de l'hôte du salon : %s\n", argv[2]);
-    servExchangeSocket = connectCltToSrv(INADDR_SVC, PORT_SVC, SOCK_STREAM);
+    // Configurer le gestionnaire pour SIGUSR1
+    signal(SIGUSR1, gestionnaireSIGUSR1);
 
-    strcpy(myRoom.host, argv[2]);
 
-    pthread_mutex_init(&terminalMutex, NULL);
-
-    // Nom = Hôte => création de salon
-    if (strcmp(argv[1], argv[2])==0){
-        printf("Demande de création de salon\n");
-        creerSalon(&myRoom, argv[1], servExchangeSocket);
-        printf("Salon créé\n");
-
-        // Lancement du thread salon
-        create_thread(&roomThread, (void *)salon, NULL);
-        usleep(100000);
+    // Créer le thread minuteur
+    if (pthread_create(&thread_minuteur, NULL, lancerMinuteur, NULL) != 0) {
+        perror("Erreur lors de la création du thread minuteur");
+        return 1;
     }
 
-    roomExchangeSocket = connectCltToSrv(INADDR_SVC, PORT_SVC, SOCK_STREAM);
+    // Créer le thread LED
+    if (pthread_create(&thread_led, NULL, gererPoints, NULL) != 0) {
+        perror("Erreur lors de la création du thread LED");
+        return 1;
+    }
 
-    // // L'hôte lance le jeu en tant que client de son salon
-    printf("Demande pour rejoindre un salon\n");
-    roomExchangeSocket = rejoindreSalon(roomExchangeSocket, argv[2], argv[1]);
-    printf("Salon rejoint\n");
+    // Créer le thread boutons
+    if (pthread_create(&thread_boutons, NULL, gererBoutons, NULL) != 0) {
+        perror("Erreur lors de la création du thread boutons");
+        return 1;
+    }
 
-    jeu(roomExchangeSocket, argv[1]);
+    /*// Simuler l'envoi d'un signal SIGUSR1 au thread minuteur après 10 secondes
+    sleep(10);
+    printf("Thread principal envoie un signal SIGUSR1 pour arrêter le minuteur.\n");
+    pthread_kill(thread_minuteur, SIGUSR1);*/
 
+    // Boucle principale du thread principal
+    while (!stop_minuteur && !buttonPressed) {
+    }
+
+    // Attendre que les threads se terminent
+    pthread_join(thread_minuteur, NULL);
+    pthread_join(thread_led, NULL);
+    pthread_join(thread_boutons, NULL);
+
+    printf("Thread principal terminé\n");
     return 0;
 }
 
-// Gestion du salon : Entrées des utilisateurs 
-void salon(){
-    socket_t se, sd[MAX_PLAYERS];
-    pthread_t client;
-    struct sockaddr_in svc, clt;
-    socklen_t cltLen;
-    requete_t requete;
-    thread_args_t *thread_args = malloc(sizeof(thread_args_t));
-    int i, j;
-    fd_set readfds;
-    struct timeval timeout;
 
-    se = creerSocketEcoute(INADDR_ANY_SOURCE, PORT_CLT_SVC);
+void *lancerMinuteur(void *arg) {
+    int i;
+    wiringPiSetup();
+    initHT16K33();
+
+    printf("Thread minuteur (ID: %ld) démarré\n", pthread_self());
     
-    // Attend l'arrivée de clients jusqu'au démarrage de la partie (décidé par l'hôte)
-    while (!stopSalon) { 
-        // Initialiser l'ensemble de descripteurs de fichiers
-        FD_ZERO(&readfds);
-        FD_SET(se.fd, &readfds);  // Ajouter la socket d'écoute
+    for (i = 6000; i >= 0; i--) {
+        if (stop_minuteur) {
+            printf("Minuteur arrêté prématurément\n");
+            pthread_exit(NULL);
+        }
+        displayNumber(i); // Afficher le temps restant
+        usleep(7350); // Attendre 10 ms (7.35ms + temps de calcul)
+    }
 
-        // Timeout de 1 seconde
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
+    printf("Minuteur terminé, envoi du signal SIGUSR1 au thread principal\n");
+    if (pthread_kill(thread_main, SIGUSR1) != 0) {
+        perror("Erreur lors de l'envoi du signal SIGUSR1");
+    }
+    pthread_exit(NULL);
+}
 
-        // Vérifier si la socket est prête à accepter une connexion
-        int ret = select(se.fd + 1, &readfds, NULL, NULL, &timeout);
+void *gererPoints(void *args) {
+    int i;
+    initMatriceLed(); // Initialiser la matrice de LED
 
-        if (ret > 0 && FD_ISSET(se.fd, &readfds)) { // Si la socket est prête
-            // New player
-            sd[myRoom.playerCount] = acceptClt(se);
-            if (stopSalon) break; // Vérifier si on doit arrêter
+    printf("Thread LED (ID: %ld) démarré\n", pthread_self());
 
-            // Reçoit le nom du nouveau joueur
-            recevoir(&sd[myRoom.playerCount], (generic)&requete, (pFct *)str2req);
-            strcpy(myRoom.players[myRoom.playerCount++].nickname, requete.cont);
-
-            // Annonce d'un nouveau joueur 
-            pthread_mutex_lock(&terminalMutex); // L'hôte partage le terminal avec le salon
-            printf("%s a rejoint le salon\n", requete.cont);
-            pthread_mutex_unlock(&terminalMutex);
+    while (!stop_minuteur) {
+        for (i = 0; i < 8; i++) {
+            afficherPoints(points);
         }
     }
-    
-    // [1] Après le lancement du jeu, demande les données au serveur
-    // Le message signale aussi la fin de l'acceptation de nouveaux joueurs
-    printf("Lancement de la partie\n");
-    requete.id = MSG_CODE;
-    strcpy(requete.cont, "");
-    envoyer(&servExchangeSocket, &requete, (pFct *)req2str);
-
-    // La réception des decks se fait un à un
-    for (i=0; i<myRoom.playerCount; i++){
-        // [4] Reçoit le deck du joueur i et la question
-        recevoir(&servExchangeSocket, (generic)&requete, (pFct *)str2req);
-        
-        // [5] Envoie le deck au joueur i (on garde le même contenu de requête)
-        envoyer(&sd[i], &requete, (pFct *)req2str);
-
-        //TODO: Traiter acquitement
-        recevoir(&sd[i], (generic)&requete, (pFct *)str2req);
-
-        // [6] Envoie la liste des joueurs 
-        sprintf(requete.cont, "%hd||%s||%s||%s||%s||%s||%s||%s||%s",
-            myRoom.playerCount,
-            myRoom.players[0].nickname, myRoom.players[1].nickname, 
-            myRoom.players[2].nickname, myRoom.players[3].nickname,
-            myRoom.players[4].nickname, myRoom.players[5].nickname,
-            myRoom.players[6].nickname, myRoom.players[7].nickname
-        );
-
-        envoyer(&sd[i], &requete, (pFct *)req2str);
-
-        requete.id = MSG_CODE;
-        strcpy(requete.cont, "");
-        envoyer(&servExchangeSocket, &requete, (pFct *)req2str);
-    }
-
-    //TODO: suite du jeu
-
-    // Clôture du dialogue
-    CHECK(close(se.fd), "close()");
-
+    clearall(); // Effacer la matrice de LED
+    printf("Thread LED terminé\n");
     pthread_exit(NULL);
 }
 
-// Fonction principale de jeu
-void jeu(socket_t sd, char *playerName){
-    deck_t deck;
-    question_t question;
-
-    if (strcmp(playerName, myRoom.host)!=0){
-        printf("Attente du lancement de la partie par l'hôte\n");
-    }
-    else {
-        pthread_mutex_lock(&terminalMutex); // L'hôte partage le terminal avec le salon
-        printf("Appuyez sur la touche entrée pour lancer la partie\n");
-        pthread_mutex_unlock(&terminalMutex);
-
-        while (getchar()!='\n'){}
-
-        // Envoi du "signal" de démarrage de partie
-        stopSalon = 1;
-    }
+void *gererBoutons(void *args) {
     
-    // [7] Reçoit les données de la partie par le salon 
-    attendreDebut(deck, question, &myRoom, sd);
 
-    // On passe en mode graphique pour jouer
-    print_ncurses_game(myRoom, question, deck, playerName);
+    printf("Thread boutons (ID: %ld) démarré\n", pthread_self());
+    delay(100); // Attendre un peu pour éviter les faux positifs
+    while (!stop_minuteur) {
+        buttonPressed = detectButton(); // Détecter les boutons
+        if (buttonPressed) {
+            printf("Bouton %d appuyé\n", buttonPressed);
+        }
+        if(buttonPressed > 0) {
+            // Si un bouton est appuyé, envoyer le signal SIGUSR1 au thread minuteur
+            /*if (pthread_kill(thread_minuteur, SIGUSR1) != 0) {
+                perror("Erreur lors de l'envoi du signal SIGUSR1");
+            }*/
+           points[buttonPressed - 1] ++; // Mettre à jour le tableau des points
+        }
+        buttonPressed = 0; // Réinitialiser l'état du bouton
+        delay(100); // Petite pause pour éviter une surcharge CPU
+    }
 
-    // Clôture du dialogue
-    CHECK(close(sd.fd), "close()");
-
+    
+    printf("Thread boutons terminé\n");
     pthread_exit(NULL);
 }
 
-void bye(){
-}
 
-/**
- * @brief Fonction qui créer un thread avec un numéro
- * @details La fonction créer un thread
- * @param thread destination de l'identifiant de thread
- * @param start_routine fonction principale du thread
- * @param
- */
-pthread_t create_thread(pthread_t *thread, void *(*start_routine)(void *), thread_args_t *args){
-    pthread_attr_t attr;
-    pthread_t tid;
-
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
-    // Passer le pointeur du socket alloué au thread
-    CHECK_T(tid = pthread_create(thread, &attr, start_routine, (void *) args), "pthread_create");
-    pthread_attr_destroy(&attr);
-
-    return tid;
+void gestionnaireSIGUSR1(int signum) {
+    printf("Signal reçu : %d dans le thread ID: %ld\n", signum, pthread_self());
+    if (pthread_self() == thread_main) {
+        printf("Thread minuteur (ID: %ld) a envoyé le signal\n", pthread_self());
+        stop_minuteur = 1; // Indique que le minuteur est arrêté
+    } else if (pthread_self() == thread_minuteur) {
+        printf("Thread principal (ID: %ld) a envoyé le signal SIGUSR1 pour arrêter le minuteur\n", pthread_self());
+        stop_minuteur = 1; // Indiquer au minuteur de s'arrêter
+    }
 }
