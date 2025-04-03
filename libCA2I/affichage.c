@@ -4,7 +4,6 @@
  * @date 23/03/2025
  * @author Julien Martinez
  * @brief Librairie contenant les fonctions pour afficher la partie avec ncurses
- * @result en dev
  * @todo \
  * Retour à la ligne à améliorer \
  * - Retirer espaces et ponctuation \

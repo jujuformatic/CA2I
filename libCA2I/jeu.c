@@ -4,12 +4,6 @@
  * @date 22/03/2025
  * @author Julien Martinez
  * @brief Fichier contenant l'application des fonctions de jeu
- * @result en dev
- * @todo \
- * Retour à la ligne à améliorer \
- * - Retirer espaces et ponctuation \
- * - Couper mot avec un tiret \
- * Prendre en compte les caractères ASCII étendu (voir noms)
  */
 
 #include "jeu.h"

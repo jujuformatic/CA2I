@@ -3,7 +3,7 @@
  * @date 28/03/25
  * @file comm.c
  * @brief Librairie contenant les fonctions de communication
- * @version en dev
+ * @version 1.0
  */
 
 #include "comm.h"
