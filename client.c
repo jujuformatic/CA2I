@@ -14,6 +14,8 @@
 #define NUM_THREAD_LED 3
 #define NUM_THREAD_BOUTONS 4
 
+#define NO_CARD " "
+
 #ifndef INADDR_SVC
   #define INADDR_SVC "127.0.0.1" // Base server IP address (to send to the players)
 #endif
@@ -43,8 +45,8 @@ socket_t roomExchangeSocket;
 volatile bool stopSalon = false;
 volatile bool remainingTime = true;
 volatile int buttonPressed = -1;
-volatile int gameMasterIndex = 0;
 volatile bool killTimer = false;
+volatile bool killButton = false;
 
 int main(int argc, char *argv[])
 {
@@ -269,12 +271,12 @@ void jeu(socket_t sd, char *playerName){
     // Boucle principale de jeu
     while(winner(&myRoom)==-1){
         buttonPressed = -1;
-        gameMasterIndex = -1;
         remainingTime = true;
         killTimer = false;
+        killButton = false;
 
         for (i=0; i<NB_ANSWERS; i++){
-            strcpy(answer[i], " ");
+            strcpy(answer[i], NO_CARD);
         }
 
         if(strcmp(playerName, myRoom.gameMaster)!=0){ // Manche en tant que joueur
@@ -288,13 +290,13 @@ void jeu(socket_t sd, char *playerName){
             create_thread(&buttonThread, (void *)getButton, NULL);
 
             while(remainingTime && buttonPressed == -1){usleep(10000);}
+            killButton = true;
             pthread_join(buttonThread, NULL);
             
             if(buttonPressed>=0){ // Le joueur a choisi une carte avant la fin du minuteur
-
                 // Réafficher l'interface avec uniquement la carte jouée
                 for (i=0; i<NB_ANSWERS; i++){
-                    strcpy(answer[i], " ");
+                    strcpy(answer[i], NO_CARD);
                     if (i==buttonPressed){
                         strcpy(answer[i], deck[i]);
                     }
@@ -306,8 +308,8 @@ void jeu(socket_t sd, char *playerName){
                 strcpy(requete.cont, deck[buttonPressed]);
                 envoyer(&sd, &requete, (pFct *)req2str);
 
-                // Retirer la carte de la main (remplacer par "")
-                strcpy(deck[buttonPressed], " ");
+                // Retirer la carte de la main (remplacer par NO_CARD)
+                strcpy(deck[buttonPressed], NO_CARD);
 
                 // Recevoir les cartes jouées par chaque joueur et les afficher
                 recevoir(&sd, (generic)&requete, (pFct *)str2req);
@@ -332,13 +334,13 @@ void jeu(socket_t sd, char *playerName){
 
                 // Réafficher l'interface avec uniquement la carte jouée (aucune donc)
                 for (i=0; i<NB_ANSWERS; i++){
-                    strcpy(answer[i], " ");
+                    strcpy(answer[i], NO_CARD);
                 }
                 print_ncurses_game(myRoom, question, answer, playerName);
                 
                 // Envoyer la carte jouée au salon (toujours aucune)
                 requete.id = CARTE;
-                strcpy(requete.cont, " ");
+                strcpy(requete.cont, NO_CARD);
                 envoyer(&sd, &requete, (pFct *)req2str);
 
                 // Recevoir les cartes jouées par chaque joueur et les afficher
@@ -369,11 +371,6 @@ void jeu(socket_t sd, char *playerName){
             // Lance le minuteur pour le choix des joueurs
             create_thread(&timerThread, (void *) timer, NULL);
 
-            // Enregistre l'index du game master pour savoir quelle carte ignorer dans le choix
-            for (i=0; i<myRoom.playerCount; i++)
-                if (strcmp(myRoom.playerNames[i], playerName) == 0)
-                    gameMasterIndex = i;
-
             // Recevoir les cartes par le salon
             recevoir(&sd, (generic)&requete, (pFct *)str2req);
             killTimer = true;
@@ -390,8 +387,22 @@ void jeu(socket_t sd, char *playerName){
             // Lance la détection d'appui de bouton pour décider du gagnant de la manche
             create_thread(&buttonThread, (void *) getButton, NULL);
 
-            //TODO: empêcher le GM de choisir une carte vide
-            while(remainingTime && buttonPressed == -1){usleep(10000);}
+            // Vérifie s'il y a au moins une carte pour décider, sinon l'hôte prend le point
+            i=0;
+            while(i<myRoom.playerCount && strcmp(answer[i], NO_CARD)==0)i++;
+
+            if(i<myRoom.playerCount){
+                do{
+                    while(remainingTime && buttonPressed == -1){usleep(10000);}
+
+                    if(buttonPressed >= 0 && buttonPressed < myRoom.playerCount){
+                        if(strcmp(answer[buttonPressed], NO_CARD)!=0)
+                            break;
+                    }
+                    buttonPressed = -1;
+                } while(remainingTime && buttonPressed==-1);
+            }
+            killButton = true;
             pthread_join(buttonThread, NULL);
 
             if(buttonPressed>=0){ // Le game master a choisi une carte avant la fin du minuteur
@@ -464,14 +475,15 @@ void *timer(void *arg) {
 }
 
 void *getButton(void *args) {
-
+    killButton = false;
     delay(100); // Attendre un peu pour éviter les faux positifs
 
-    while (remainingTime && ( buttonPressed==-1 || buttonPressed==gameMasterIndex )) {
+    while (remainingTime && !killButton) {
         buttonPressed = detectButton(); // Détecter les boutons
         delay(100); // Petite pause pour éviter une surcharge CPU
     }
 
+    killButton = false;
     pthread_exit(NULL);
 }
 
