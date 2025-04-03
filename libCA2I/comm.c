@@ -42,19 +42,20 @@ int creerSalon(room_t *room, char *hostname, socket_t exchangeSocket)
     int i;
     // Rentre les données initiales du salon
     room->playerCount=0;
-    strcpy(room->host, hostname);
     strcpy(room->gameMaster, hostname);
 
     for(i=0; i<MAX_PLAYERS; i++){
-        strcpy(room->players[i].nickname, "");
-        room->players[i].score = 0;
+        strcpy(room->playerNames[i], "");
+        room->playersScores[i] = 0;
     }
+
+    strcpy(room->playerNames[0], hostname);
 
     // Envoie la requête au serveur avec les données du salon 
     //      (le serveur connaît l'IP et le port, on n'envoie donc que le nom)
     requete.id = CREATE_ROOM;
     sprintf(requete.cont, "%s", 
-        room->host
+        room->playerNames[0]
     );
     envoyer(&exchangeSocket, &requete, (pFct *)req2str);
 
@@ -94,20 +95,19 @@ int attendreDebut(deck_t deck, question_t question, room_t *room, socket_t excha
     // Enregistre les informations transmises
     sscanf(requete.cont, "%hd||%[^|]||%[^|]||%[^|]||%[^|]||%[^|]||%[^|]||%[^|]||%[^|]",
         &room->playerCount,
-        room->players[0].nickname, room->players[1].nickname, 
-        room->players[2].nickname, room->players[3].nickname,
-        room->players[4].nickname, room->players[5].nickname,
-        room->players[6].nickname, room->players[7].nickname
+        room->playerNames[0], room->playerNames[1], 
+        room->playerNames[2], room->playerNames[3],
+        room->playerNames[4], room->playerNames[5],
+        room->playerNames[6], room->playerNames[7]
     );
 
-    strcpy(room->gameMaster, room->players[0].nickname);
-    strcpy(room->host, room->players[0].nickname);
+    strcpy(room->gameMaster, room->playerNames[0]);
 
     // Envoie le résultat
     return 1;
 }
 
-void envoyerDebutAuSalon(room_t *room, socket_t exchangeSocket)
+void envoyerDebutAuSalon(room_t *room, socket_t exchangeSocket, char *questionsFile, char *answersFile)
 {
     deck_t deck;
     requete_t requete;
@@ -115,12 +115,12 @@ void envoyerDebutAuSalon(room_t *room, socket_t exchangeSocket)
     int i, j;
 
     // Tirer carte question
-    getRandomCards(QUESTIONS, 1, &question);
+    getRandomCards(questionsFile, 1, &question);
     
     // Pour chaque joueur : 
     for (i=0; i<room->playerCount; i++){
         // Tirer 8 cartes réponses 
-        getRandomCards(ANSWERS, NB_ANSWERS, deck);
+        getRandomCards(answersFile, NB_ANSWERS, deck);
 
         // [3] Envoyer toutes les cartes (réponses + questions)1
         sprintf(requete.cont, "%s||%s||%s||%s||%s||%s||%s||%s||%s",

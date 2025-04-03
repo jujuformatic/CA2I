@@ -15,21 +15,13 @@
     #define CARD_MAX_LENGTH 50
     #define NB_ANSWERS 8
     #define MAX_ROOMS 10
-    
-    #define ANSWERS "Answers.txt"
-    #define QUESTIONS "Questions.txt"
+    #define MAX_POINTS 8
 
     typedef struct
     {
-        char nickname[NAME_MAX_LENGTH];
-        unsigned char score;
-    } player_t;
-
-    typedef struct
-    {
-        char host[NAME_MAX_LENGTH];
         char IP[INET_ADDRSTRLEN];
-        player_t players[MAX_PLAYERS];
+        int playersScores[MAX_PLAYERS];
+        char playerNames[MAX_PLAYERS][NAME_MAX_LENGTH];
         short playerCount;
         char gameMaster[NAME_MAX_LENGTH]; 
         short closed;

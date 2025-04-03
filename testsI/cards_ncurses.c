@@ -62,6 +62,7 @@ void getRandomCards(char *file, int cardsNumber, char **destination)
     int i;
 
     snprintf(command, sizeof(command), "awk 'length<=50' %s | shuf -n %d", file, cardsNumber);
+    printf("%s\n", command);
     fp = popen(command, "r");
 
     for (i = 0; i < cardsNumber; i++)

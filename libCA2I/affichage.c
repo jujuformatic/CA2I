@@ -125,15 +125,15 @@ void print_ncurses_game(room_t room, question_t question, deck_t deck, char *pla
     {
         char name1[NAME_MAX_LENGTH + 2];
         char name2[NAME_MAX_LENGTH + 2];
-        if (!strcmp(room.players[i].nickname, player))
+        if (!strcmp(room.playerNames[i], player))
         {
-            sprintf(name1, "[%s]", room.players[i].nickname);
+            sprintf(name1, "[%s]", room.playerNames[i]);
         }
         else
         {
-            sprintf(name1, " %s", room.players[i].nickname);
+            sprintf(name1, " %s", room.playerNames[i]);
         }
-        if (!strcmp(room.players[i].nickname, room.host))
+        if (!strcmp(room.playerNames[i], room.gameMaster))
         {
             sprintf(name2, ">%s", name1);
         }
@@ -212,15 +212,6 @@ void print_ncurses_game(room_t room, question_t question, deck_t deck, char *pla
 
     print_text_in_window(winMid, 1, 1, question, midRectWidth);
     wrefresh(winMid);
-
-    // Boucle infinie pour garder l'affichage
-    while (1)
-    {
-        getch();
-        // On ne fait rien, on attend juste
-    }
-
-    // Fin de ncurses (jamais atteint en pratique, sauf Ctrl+C)
-    endwin();
+    
     return;
 }

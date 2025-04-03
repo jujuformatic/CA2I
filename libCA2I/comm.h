@@ -11,7 +11,6 @@
 
 #define PORT_SVC 5000 // Server listening port (to send to the players)
 #define PORT_CLT_SVC 5001 // Host listening port
-#define INADDR_SVC "127.0.0.1" // Server IP address (to send to the players)
 #define INADDR_ANY_SOURCE "0.0.0.0" // Origin IP address of players (any)
 
 // Communication codes
@@ -85,7 +84,7 @@ int creerSalon(room_t *room, char *hostname, socket_t exchangeSocket);
  */
 int attendreDebut(deck_t deck, question_t question, room_t *room, socket_t exchangeSocket);
 
-void envoyerDebutAuSalon(room_t *room, socket_t exchangeSocket);
+void envoyerDebutAuSalon(room_t *room, socket_t exchangeSocket, char *questionsFile, char *answersFile);
 
 /**
  * @fn int lancerPartie()

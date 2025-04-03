@@ -6,9 +6,12 @@
 #include <arpa/inet.h>
 #include <string.h>
 
+#define ANSWERS "../data/Answers.txt"
+#define QUESTIONS "../data/Questions.txt"
+
 void traiterSignal(int sig);
 void installSignal(int sigNum, void (*handler)(int));
-pthread_t create_thread_socket(pthread_t *thread, void *(*start_routine)(void *), socket_t socket);
+pthread_t create_thread_socket(pthread_t *thread, void *(*start_routine)(void *), socket_t *socket);
 
 void bye(void);
 void dialogueClt(void *arg);
@@ -44,16 +47,14 @@ int main()
         // New player
         sd = acceptClt(se);
 
-        create_thread_socket(&client, (void *)dialogueClt, sd);
+        create_thread_socket(&client, dialogueClt, &sd);
         pthread_detach(client);
     }
     return 0;
 }
 
 void dialogueClt(void *arg) {
-    socket_t *socket_ptr = (socket_t *)arg;
-    socket_t sd = *socket_ptr; // Temporary socket
-    free(socket_ptr);
+    socket_t *sd = (socket_t *)arg;
 
     requete_t requete;
     room_t *room = malloc(sizeof(room_t));
@@ -64,7 +65,7 @@ void dialogueClt(void *arg) {
 
     // Début de la discussion : vérification de la demande du client (créer/rejoindre)
 
-    recevoir(&sd, (generic)&requete, (pFct *)str2req);
+    recevoir(sd, (generic)&requete, (pFct *)str2req);
 
     printf("Message reçu [%d:%s]\n", requete.id, requete.cont);
 
@@ -72,15 +73,15 @@ void dialogueClt(void *arg) {
         case CREATE_ROOM:
             printf("Demande de création de salon\n");
             
-            sscanf(requete.cont, "%s", room->host);
-            strcpy(room->IP, inet_ntoa(sd.addrdist.sin_addr));
+            sscanf(requete.cont, "%s", room->playerNames[0]);
+            strcpy(room->IP, inet_ntoa(sd->addrdist.sin_addr));
             
             addRoom(roomList, room);
 
             printf("Salon créé à l'adresse %s\n", room->IP);
             requete.id = OK;
-            strcpy(requete.cont, "");
-            envoyer(&sd, &requete, (pFct *)req2str);
+            strcpy(requete.cont, " ");
+            envoyer(sd, &requete, (pFct *)req2str);
             break;
 
         case JOIN_ROOM:
@@ -90,7 +91,7 @@ void dialogueClt(void *arg) {
             requete.id = NOK;
 
             for (i=0; i<roomList->roomNumber; i++){
-                if (strcmp(roomList->rooms[i]->host, requete.cont)==0 && roomList->rooms[i]->playerCount < MAX_PLAYERS && !roomList->rooms[i]->closed){
+                if (strcmp(roomList->rooms[i]->playerNames[0], requete.cont)==0 && roomList->rooms[i]->playerCount < MAX_PLAYERS && !roomList->rooms[i]->closed){
                     printf("Salon trouvé\n");
                     roomList->rooms[i]->playerCount++;
                     strcpy(requete.cont, roomList->rooms[i]->IP);
@@ -98,10 +99,10 @@ void dialogueClt(void *arg) {
                     break;
                 }
             }
-            envoyer(&sd, &requete, (pFct *)req2str);
+            envoyer(sd, &requete, (pFct *)req2str);
 
             // Déconnection du joueur
-            close(sd.fd);
+            close(sd->fd);
             pthread_exit(NULL);
             break;
             
@@ -109,18 +110,37 @@ void dialogueClt(void *arg) {
             break;        
     }
 
-    // [2] Après avoir créé le salon et démarré la partie, le salon va demander au serveur les cartes
-    recevoir(&sd, (generic)&requete, (pFct *)str2req);
+    // Après avoir créé le salon et démarré la partie, le salon va demander au serveur les cartes
+    recevoir(sd, (generic)&requete, (pFct *)str2req);
     printf("Partie lancée par l'hôte\n");
 
     // On commence par fermer la connection au salon
     room->closed = 1;
 
     // Ensuite, on tire et envoie les cartes au salon
-    envoyerDebutAuSalon(room, sd);
+    envoyerDebutAuSalon(room, *sd, QUESTIONS, ANSWERS);
     printf("Lancement de la partie fini\n");
 
-    //TODO: continuer communication salon
+    //TODO: continuer communication salon avec les cartes à chaque manche
+    while (1){
+        recevoir(sd, (generic)&requete, (pFct *)str2req);
+        if (requete.id == BYE_CODE) break;
+
+        // Tirer carte question et 8 réponses
+        getRandomCards(QUESTIONS, 1, &question);
+        getRandomCards(ANSWERS, NB_ANSWERS, deck);
+
+        // Envoyer toutes les cartes (réponses + questions)
+        sprintf(requete.cont, "%s||%s||%s||%s||%s||%s||%s||%s||%s",
+            question,
+            deck[0],deck[1],deck[2],deck[3],deck[4],deck[5],deck[6],deck[7]
+            );
+
+        requete.id = MSG_CODE;
+        envoyer(sd, &requete, (pFct *)req2str);
+    }
+
+    CHECK(close(sd->fd), "close()");
 
     pthread_exit(NULL);
 }
@@ -156,7 +176,7 @@ void installSignal(int sigNum, void (*handler)(int)) {
  * @param start_routine fonction principale du thread
  * @param socket socket de dialogue entre le thread et le client
  */
-pthread_t create_thread_socket(pthread_t *thread, void *(*start_routine)(void *), socket_t socket) {
+pthread_t create_thread_socket(pthread_t *thread, void *(*start_routine)(void *), socket_t *socket) {
     pthread_attr_t attr;
     pthread_t tid;
 
@@ -166,7 +186,7 @@ pthread_t create_thread_socket(pthread_t *thread, void *(*start_routine)(void *)
         perror("malloc");
         exit(EXIT_FAILURE);
     }
-    *socket_ptr = socket;
+    *socket_ptr = *socket;
 
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
@@ -185,7 +205,8 @@ pthread_t create_thread_socket(pthread_t *thread, void *(*start_routine)(void *)
  * Does not allocate memory
  */
 void initRoomList(roomList_t *roomList){
-    for (int i = 0; i < MAX_ROOMS; i++) {
+    int i;
+    for (i = 0; i < MAX_ROOMS; i++) {
         roomList->rooms[i] = NULL;  // Initialize room pointers to NULL
     }
     roomList->roomNumber = 0;
@@ -228,7 +249,7 @@ int popRoom(roomList_t *roomList, room_t *room){
     CHECK_T(sem_wait(&roomList->sem), "sem_wait()");
     int i = 0;
     
-    while (strcmp(roomList->rooms[i]->host, room->host) != 0) i++;
+    while (strcmp(roomList->rooms[i]->playerNames[0], room->playerNames[0]) != 0) i++;
 
     roomList->rooms[i] = roomList->rooms[roomList->roomNumber-1];
     roomList->roomNumber--;
